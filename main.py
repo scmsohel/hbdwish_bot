@@ -1,17 +1,18 @@
+# main.py
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    filters,
     ContextTypes,
+    filters,
 )
-import os
-import json
+import os, json, asyncio
 
 # ================== CONFIG ==================
-BOT_TOKEN = "8456619375:AAGuZ0RloNGe5LsfjHo4fZ0XBN7lq3u6PTA"
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Render environment variable
 CHANNEL_ID = "@nextgentech_bd"
 CHANNEL_LINK = "https://t.me/nextgentech_bd"
 DATA_FILE = "user_data.json"
@@ -36,8 +37,8 @@ def get_user(user_id:int):
         all_data = json.load(f)
     return all_data.get(str(user_id), {})
 
-# ================== Helper ==================
-async def is_member(user_id:int, context:ContextTypes.DEFAULT_TYPE)->bool:
+# ================== HELPERS ==================
+async def is_member(user_id:int, context:ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
         return member.status in ['member', 'administrator', 'creator']
@@ -56,24 +57,21 @@ def language_keyboard():
          InlineKeyboardButton("🇬🇧 English", callback_data="en")]
     ])
 
-# ================== /start ==================
-async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
+# ================== HANDLERS ==================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if not await is_member(user_id, context):
         await update.message.reply_text(
             "⚠️ অনুগ্রহ করে আমাদের চ্যানেলে join করুন:",
             reply_markup=join_verify_keyboard()
         )
         return
-
     await update.message.reply_text(
         "আপনি কোন ভাষায় wish করতে চান?",
         reply_markup=language_keyboard()
     )
 
-# ================== CALLBACK ==================
-async def handle_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -103,15 +101,13 @@ async def handle_callback(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if "link" in data:
             link = data["link"]
             await query.message.reply_text(
-                "আপনার লিঙ্কটি কপি করতে লিঙ্কের উপর টাচ করুন, কপি হয়ে যাবে:👇👇\n\n"
                 f"👉👉 `{link}`",
                 parse_mode="MarkdownV2"
             )
         else:
             await query.message.reply_text("প্রথমে নাম লিখুন। / Write a name first.")
 
-# ================== MESSAGE HANDLER ==================
-async def handle_message(update:Update, context:ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = get_user(user_id)
 
@@ -136,22 +132,26 @@ async def handle_message(update:Update, context:ContextTypes.DEFAULT_TYPE):
     user_data["link"] = link
     save_user(user_id, user_data)
 
-    # Buttons: Copy Link / Share Link
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("কপি লিঙ্ক", callback_data="copy_link")],
         [InlineKeyboardButton("Wish চেক", url=link)]
     ])
-
     await update.message.reply_text(msg, reply_markup=keyboard)
 
-# ================== MAIN ==================
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Bot running...")
-    app.run_polling()
+# ================== FASTAPI + BOT ==================
+app = FastAPI()
+bot_app = Application.builder().token(BOT_TOKEN).build()
+bot_app.add_handler(CommandHandler("start", start))
+bot_app.add_handler(CallbackQueryHandler(handle_callback))
+bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-if __name__ == "__main__":
-    main()
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, bot_app.bot)
+    asyncio.create_task(bot_app.process_update(update))
+    return {"ok": True}
+
+@app.on_event("startup")
+async def on_startup():
+    print("Bot webhook ready.")
