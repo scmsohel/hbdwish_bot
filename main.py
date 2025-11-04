@@ -2,14 +2,14 @@
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
-import os, json, asyncio
+import os, json
 
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # Render environment variable
@@ -140,18 +140,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== FASTAPI + BOT ==================
 app = FastAPI()
-bot_app = Application.builder().token(BOT_TOKEN).build()
+bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(CallbackQueryHandler(handle_callback))
 bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+@app.on_event("startup")
+async def on_startup():
+    await bot_app.initialize()
+    print("Bot webhook ready.")
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     data = await req.json()
     update = Update.de_json(data, bot_app.bot)
-    asyncio.create_task(bot_app.process_update(update))
+    await bot_app.process_update(update)
     return {"ok": True}
 
-@app.on_event("startup")
-async def on_startup():
-    print("Bot webhook ready.")
+@app.get("/")
+async def root():
+    return {"message": "Bot is running"}
